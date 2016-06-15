@@ -1,0 +1,29 @@
+PreCommit:
+  OvercommitConfig:
+    enabled: true
+    description: Check lab hooks are configured
+  ChangeTogether:
+    enabled: true
+    description: Check if Nix expression needs to be updated
+    files: ['Cargo.toml', 'Cargo.lock', 'default.nix']
+    message: run nix-build
+  AuthorName:
+    enabled: false
+
+CommitMsg:
+  CommitTag:
+    enabled: true
+    description: Check subject tag
+  Imperative:
+    enabled: true
+    description: Check subject tense
+  CapitalizedSubject:
+    enabled: false
+  SubjectFormat:
+    enabled: true
+    description: Check subject format
+
+PrePush:
+  BranchFormat:
+    enabled: true
+    description: Check branch naming
