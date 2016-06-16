@@ -54,7 +54,7 @@ fn run<T>(cmd: &mut Command) -> Result<T> where T : CommandOut {
     T::run(cmd)
 }
 
-fn probably_unique_name(length: u64) -> String {
+fn probably_unique_name(length: usize) -> String {
     use rand::distributions::{IndependentSample, Range};
     let between = Range::new(0, 36);
     let mut rng = rand::thread_rng();
@@ -63,7 +63,7 @@ fn probably_unique_name(length: u64) -> String {
     }
 }
 
-fn create(nixpkgs : String, config_file : String) -> Result<String> {
+fn create(nixpkgs : &str, config_file : &str) -> Result<String> {
     let name = format!("fr{}", probably_unique_name(9));
     match run(Command::new("nixos-container").arg("create").arg(&name).arg("--config").arg(format!("imports = [ {} ];", config_file)).env("NIX_PATH", format!("nixpkgs={}", nixpkgs))) {
         Ok(()) => Ok(name),
@@ -71,24 +71,37 @@ fn create(nixpkgs : String, config_file : String) -> Result<String> {
     }
 }
 
+fn run_test(container_name : &str, args : &[String]) -> Result<i32> {
+    try!(run(Command::new("nixos-container").arg("start").arg(container_name)));
+    match run(Command::new("nixos-container").arg("run").arg(container_name).arg("--").args(args)) {
+        Ok(()) => Ok(0),
+        Err(NonZero(_, Some(code))) => Ok(code),
+        Err(e) => Err(e)
+    }
+}
+
 fn destroy(container_name : &str) -> Result<()> {
     run(Command::new("nixos-container").arg("destroy").arg(container_name))
 }
 
-fn go() -> Result<()> {
+fn go() -> Result<i32> {
     let mut args = std::env::args();
     args.next(); // Discard program name
     let nixpkgs = try!(args.next().ok_or(Error::Usage("Missing nixpkgs argument")));
     let config_file = try!(args.next().ok_or(Error::Usage("Missing config file argument")));
+    let test_args : Vec<String> = args.collect();
+    if test_args.len() == 0 {
+        return Err(Usage("Missing test args"));
+    }
 
-    let container_name = try!(create(nixpkgs, config_file));
-    println!("{}", container_name);
+    let container_name = try!(create(&nixpkgs, &config_file));
+    let res = run_test(&container_name, &test_args);
     try!(destroy(&container_name));
-    Ok(())
+    res
 }
 
 fn main() {
-    go().unwrap_or_else(|e| std::process::exit(match e {
+    std::process::exit(go().unwrap_or_else(|e| match e {
         NonZero(cmd, code) => { writeln!(io::stderr(), "Command {:?} failed with code {:?}", cmd, code).unwrap(); 2 },
         Usage(msg) => { writeln!(io::stderr(), "Usage error: {}", msg).unwrap(); 1 },
         IoError(err) => { writeln!(io::stderr(), "{}", err).unwrap(); 2 }
