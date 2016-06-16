@@ -1,3 +1,5 @@
+extern crate rand;
+
 use std::io;
 use std::io::Write;
 use std::process::Command;
@@ -18,6 +20,17 @@ type Result<T> = std::result::Result<T, Error>;
 
 trait CommandOut : Sized {
     fn run(&mut Command) -> Result<Self>;
+}
+
+impl CommandOut for () {
+    fn run(cmd: &mut Command) -> Result<Self> {
+        let exit = try!(cmd.spawn().and_then(|mut c| c.wait()));
+        if exit.success() {
+            Ok(())
+        } else {
+            Err(NonZero(format!("{:?}", cmd), exit.code()))
+        }
+    }
 }
 
 impl CommandOut for String {
@@ -41,8 +54,25 @@ fn run<T>(cmd: &mut Command) -> Result<T> where T : CommandOut {
     T::run(cmd)
 }
 
-fn start(nixpkgs : String, config_file : String) -> Result<String> {
-    run(Command::new("nixos-container").arg("create").arg("fragile").arg("--ensure-unique-name").arg("--config").arg(format!("imports = [ {} ];", config_file)).env("NIX_PATH", format!("nixpkgs={}", nixpkgs)))
+fn probably_unique_name(length: u64) -> String {
+    use rand::distributions::{IndependentSample, Range};
+    let between = Range::new(0, 36);
+    let mut rng = rand::thread_rng();
+    unsafe {
+        std::str::from_utf8_unchecked(&(0..length).map(|_| between.ind_sample(&mut rng)).map(|v| if v < 10 { v + 48 } else { v + 87 }).collect::<Vec<u8>>()).to_string()
+    }
+}
+
+fn create(nixpkgs : String, config_file : String) -> Result<String> {
+    let name = format!("fr{}", probably_unique_name(9));
+    match run(Command::new("nixos-container").arg("create").arg(&name).arg("--config").arg(format!("imports = [ {} ];", config_file)).env("NIX_PATH", format!("nixpkgs={}", nixpkgs))) {
+        Ok(()) => Ok(name),
+        Err(e) => { let _ = destroy(&name); Err(e) }
+    }
+}
+
+fn destroy(container_name : &str) -> Result<()> {
+    run(Command::new("nixos-container").arg("destroy").arg(container_name))
 }
 
 fn go() -> Result<()> {
@@ -50,7 +80,10 @@ fn go() -> Result<()> {
     args.next(); // Discard program name
     let nixpkgs = try!(args.next().ok_or(Error::Usage("Missing nixpkgs argument")));
     let config_file = try!(args.next().ok_or(Error::Usage("Missing config file argument")));
-    println!("{}", try!(start(nixpkgs, config_file)));
+
+    let container_name = try!(create(nixpkgs, config_file));
+    println!("{}", container_name);
+    try!(destroy(&container_name));
     Ok(())
 }
 
