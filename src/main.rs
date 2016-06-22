@@ -9,7 +9,7 @@ use std::io::Write;
 use std::process::Command;
 
 enum Error {
-    Usage(&'static str),
+    Usage(String),
     NonZero(String, Option<i32>),
     ControlError(String),
     IoError(io::Error),
@@ -245,11 +245,16 @@ fn destroy(container_name : &str) -> Result<()> {
 fn go() -> Result<i32> {
     let mut args = std::env::args();
     args.next(); // Discard program name
-    let config_file = try!(args.next().ok_or(Error::Usage("Missing config file argument")));
+    let config_file = try!(args.next().ok_or(Error::Usage("Missing config file argument".to_string())));
     let test_args : Vec<String> = args.collect();
     if test_args.len() == 0 {
-        return Err(Usage("Missing test args"));
+        return Err(Usage("Missing test args".to_string()));
     }
+
+    let config_file = {
+        let p = try!(std::fs::canonicalize(config_file).map_err(|e| Usage(format!("For config file: {}", e))));
+        try!(p.to_str().ok_or(Usage("Config file path is invalid UTF-8".to_string()))).to_string()
+    };
 
     try!(system_init());
     let container_name = try!(create(&config_file));
