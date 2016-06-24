@@ -5,6 +5,8 @@ let
 in {
   environment.systemPackages = [ fragile ];
   security.sudo.extraConfig = ''
-    %nixbld ALL = NOPASSWD: ${fragile}/bin/fragile
+    Cmnd_Alias FRAGILE = ${fragile}/bin/fragile
+    Defaults!FRAGILE env_keep += NIX_PATH
+    %nixbld ALL = NOPASSWD: FRAGILE
   '';
 }
