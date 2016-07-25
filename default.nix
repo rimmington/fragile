@@ -14,5 +14,6 @@ rustPlatform.buildRustPackage {
       --replace '"mountpoint"' '"${eject}/bin/mountpoint"' \
       --replace '"rm"' '"${coreutils}/bin/rm"'
   '';
-  depsSha256 = "1wjnrsxagb1v03spdmfrfdas59a53qacj8i1gibwqrvqbmxw4wmj";
+  depsSha256 = "0mjazra3b6z128z5baq8hmq63b56iamh30qjn3ifzhx5znwq1vqi";
+  shellHook = "unset SSL_CERT_FILE";  # https://github.com/NixOS/nixpkgs/issues/13744
 }

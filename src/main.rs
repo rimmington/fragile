@@ -1,19 +1,24 @@
 extern crate combine;
 extern crate nix; // As in *nix
 extern crate rand;
+extern crate signal;
+
+mod commander;
 
 // Reference: https://github.com/NixOS/nixpkgs/blob/b07051ce6c3ba3039c89b6755da279002b0c3ace/nixos/modules/virtualisation/nixos-container.pl
 
+use nix::sys::signal::{kill, SIGTERM, SIGINT};
 use std::io;
 use std::io::Write;
 use std::process::Command;
 
 enum Error {
     Usage(String),
-    NonZero(String, Option<i32>),
+    NonZero(String, i32),
     ControlError(String),
     IoError(io::Error),
-    NixError(nix::Error)
+    NixError(nix::Error),
+    Interrupted(commander::Signal)
 }
 
 use Error::*;
@@ -26,43 +31,14 @@ impl From<nix::Error> for Error {
     fn from(e: nix::Error) -> Self { NixError(e) }
 }
 
+impl From<commander::NonZero> for Error {
+    fn from(e: commander::NonZero) -> Self { match e { commander::NonZero::NonZero(s, o) => NonZero(s, o), commander::NonZero::Interrupted(n) => Interrupted(n) } }
+}
+
 type Result<T> = std::result::Result<T, Error>;
 
-trait CommandOut : Sized {
-    fn run(&mut Command) -> Result<Self>;
-}
-
-impl CommandOut for () {
-    fn run(cmd: &mut Command) -> Result<Self> {
-        let exit = try!(cmd.spawn().and_then(|mut c| c.wait()));
-        if exit.success() {
-            Ok(())
-        } else {
-            Err(NonZero(format!("{:?}", cmd), exit.code()))
-        }
-    }
-}
-
-impl CommandOut for String {
-    fn run(cmd: &mut Command) -> Result<Self> {
-        use std::process::Stdio;
-        use std::io::Read;
-        let mut buffer = String::new();
-        let mut child = try!(cmd.stderr(Stdio::null()).stdout(Stdio::piped()).spawn());
-        let rdres = child.stdout.as_mut().unwrap().read_to_string(&mut buffer);
-        let wtres = child.wait();
-        let exit = try!(rdres.and(wtres).map_err(IoError));
-        if exit.success() {
-            Ok(buffer)
-        } else {
-            Err(NonZero(format!("{:?}", cmd), exit.code()))
-        }
-    }
-}
-
-fn run<T>(cmd: &mut Command) -> Result<T> where T : CommandOut {
-    T::run(cmd)
-}
+// TODO: why can't this be inferred away
+fn run<T>(cmd: &mut Command) -> Result<T> where T: commander::CommandOut { commander::run(cmd) }
 
 fn probably_unique_name(length: usize) -> String {
     use rand::distributions::{IndependentSample, Range};
@@ -205,7 +181,7 @@ fn run_test(container_name : &str, args : &[String]) -> Result<i32> {
             .arg("-m").arg("-u").arg("-i").arg("-n").arg("-p")
             .arg("--").arg("/var/setuid-wrappers/su").arg("root").arg("-l").arg("-c").arg(format!("exec {}", su_cmd))) {
         Ok(()) => Ok(0),
-        Err(NonZero(_, Some(code))) => Ok(code),
+        Err(NonZero(_, code)) => Ok(code),
         Err(e) => Err(e)
     }
 }
@@ -232,7 +208,11 @@ fn safe_remove_tree(path : &str) -> Result<()> {
 }
 
 fn destroy(container_name : &str) -> Result<()> {
-    try!(run(Command::new("systemctl").arg("stop").arg(format!("container@{}", container_name))));
+    match run(Command::new("systemctl").arg("stop").arg(format!("container@{}", container_name))) {
+        Ok(()) => {},
+        Err(Interrupted(_)) => { let _ = run::<()>(Command::new("systemctl").arg("kill").arg(format!("container@{}", container_name))); },
+        e => return e
+    }
     try!(safe_remove_tree(&profile_dir(container_name)));
     try!(safe_remove_tree(&format!("/nix/var/nix/gcroots/per-container/{}", container_name)));
     try!(safe_remove_tree(&container_root(container_name)));
@@ -257,8 +237,13 @@ fn go() -> Result<i32> {
     };
 
     try!(system_init());
+    // We suppress signals in this process and allow the commander module to deal with child processes
+    let trap = signal::trap::Trap::trap(&[SIGTERM, SIGINT]);
     let container_name = try!(create(&config_file));
-    let res = run_test(&container_name, &test_args);
+    let res = match trap.wait(std::time::Instant::now()) {
+        None => run_test(&container_name, &test_args),
+        Some(n) => Err(Interrupted(n))
+    };
     try!(destroy(&container_name));
     res
 }
@@ -269,6 +254,8 @@ fn main() {
         Usage(msg) => { writeln!(io::stderr(), "Usage error: {}", msg).unwrap(); 1 },
         IoError(err) => { writeln!(io::stderr(), "{}", err).unwrap(); 2 },
         NixError(err) => { writeln!(io::stderr(), "{}", err).unwrap(); 2 },
-        ControlError(msg) => { writeln!(io::stderr(), "{}", msg).unwrap(); 2 }
+        ControlError(msg) => { writeln!(io::stderr(), "{}", msg).unwrap(); 2 },
+        Interrupted(SIGINT) => { kill(nix::unistd::getpid(), SIGINT).unwrap(); loop {} }
+        Interrupted(n) => 128 + n
     }));
 }
