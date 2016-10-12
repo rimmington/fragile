@@ -207,12 +207,18 @@ fn safe_remove_tree(path : &str) -> Result<()> {
     Ok(())
 }
 
-fn destroy(container_name : &str) -> Result<()> {
+fn stop(container_name : &str) -> Result<()> {
     match run(Command::new("systemctl").arg("stop").arg(format!("container@{}", container_name))) {
-        Ok(()) => {},
-        Err(Interrupted(_)) => { let _ = run::<()>(Command::new("systemctl").arg("kill").arg(format!("container@{}", container_name))); },
-        e => return e
+        Ok(()) => Ok(()),
+        Err(Interrupted(_)) => {
+            return run(Command::new("systemctl").arg("kill").arg(format!("container@{}", container_name)))
+        },
+        Err(e) => Err(e)
     }
+}
+
+fn destroy(container_name : &str) -> Result<()> {
+    try!(stop(container_name));
     try!(safe_remove_tree(&profile_dir(container_name)));
     try!(safe_remove_tree(&format!("/nix/var/nix/gcroots/per-container/{}", container_name)));
     try!(safe_remove_tree(&container_root(container_name)));
@@ -244,7 +250,8 @@ fn go() -> Result<i32> {
         None => run_test(&container_name, &test_args),
         Some(n) => Err(Interrupted(n))
     };
-    try!(destroy(&container_name));
+    try!(stop(&container_name));
+
     res
 }
 
