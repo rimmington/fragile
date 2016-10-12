@@ -229,9 +229,14 @@ fn destroy(container_name : &str) -> Result<()> {
 }
 
 fn go() -> Result<i32> {
-    let mut args = std::env::args();
-    args.next(); // Discard program name
+    // Skip program name
+    let mut args = std::env::args().skip(1).peekable();
+
+    let no_destroy = args.peek().map_or(false, |arg| arg == "--no_destroy");
+    if no_destroy { args.next(); }
+
     let config_file = try!(args.next().ok_or(Error::Usage("Missing config file argument".to_string())));
+
     let test_args : Vec<String> = args.collect();
     if test_args.len() == 0 {
         return Err(Usage("Missing test args".to_string()));
@@ -250,7 +255,12 @@ fn go() -> Result<i32> {
         None => run_test(&container_name, &test_args),
         Some(n) => Err(Interrupted(n))
     };
-    try!(stop(&container_name));
+
+    if no_destroy {
+        try!(stop(&container_name));
+    } else {
+        try!(destroy(&container_name));
+    }
 
     res
 }
