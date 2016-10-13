@@ -261,9 +261,8 @@ fn go() -> Result<i32> {
         Some(n) => Err(Interrupted(n))
     };
 
-    if no_destroy {
-        try!(stop(&container_name));
-    } else {
+    let _ = stop(&container_name);
+    if !no_destroy {
         try!(destroy(&container_name));
     }
 
