@@ -12,6 +12,7 @@ use std::io;
 use std::io::Write;
 use std::process::Command;
 
+#[derive(Debug)]
 enum Error {
     Usage(String),
     NonZero(String, i32),
@@ -218,10 +219,14 @@ fn stop(container_name : &str) -> Result<()> {
 }
 
 fn destroy(container_name : &str) -> Result<()> {
-    try!(stop(container_name));
-    try!(safe_remove_tree(&profile_dir(container_name)));
-    try!(safe_remove_tree(&format!("/nix/var/nix/gcroots/per-container/{}", container_name)));
-    try!(safe_remove_tree(&container_root(container_name)));
+    fn log_err(e: Error) {
+        println!("Error while destroying container: {:?}", e);
+    }
+
+    safe_remove_tree(&profile_dir(container_name)).unwrap_or_else(log_err);
+    safe_remove_tree(&format!("/nix/var/nix/gcroots/per-container/{}", container_name)).unwrap_or_else(log_err);
+    safe_remove_tree(&container_root(container_name)).unwrap_or_else(log_err);
+
     std::fs::remove_file(conf_file(container_name)).or_else(|e| match e.kind() {
         std::io::ErrorKind::NotFound => Ok(()),
         _ => Err(IoError(e))
