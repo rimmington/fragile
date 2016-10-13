@@ -12,6 +12,7 @@ use std::io;
 use std::io::Write;
 use std::process::Command;
 
+#[derive(Debug)]
 enum Error {
     Usage(String),
     NonZero(String, i32),
@@ -163,7 +164,7 @@ fn create(config_file : &str) -> Result<String> {
     match res.and_then(|()| populate_container(&name, config_file)) {
         Ok(()) => Ok(name),
         // Don't leave a half-baked container behind
-        Err(e) => { let _ = destroy(&name); Err(e) }
+        Err(e) => { let _ = (stop(&name), destroy(&name)); Err(e) }
     }
 }
 
@@ -207,15 +208,25 @@ fn safe_remove_tree(path : &str) -> Result<()> {
     Ok(())
 }
 
-fn destroy(container_name : &str) -> Result<()> {
+fn stop(container_name : &str) -> Result<()> {
     match run(Command::new("systemctl").arg("stop").arg(format!("container@{}", container_name))) {
-        Ok(()) => {},
-        Err(Interrupted(_)) => { let _ = run::<()>(Command::new("systemctl").arg("kill").arg(format!("container@{}", container_name))); },
-        e => return e
+        Ok(()) => Ok(()),
+        Err(Interrupted(_)) => {
+            return run(Command::new("systemctl").arg("kill").arg(format!("container@{}", container_name)))
+        },
+        Err(e) => Err(e)
     }
-    try!(safe_remove_tree(&profile_dir(container_name)));
-    try!(safe_remove_tree(&format!("/nix/var/nix/gcroots/per-container/{}", container_name)));
-    try!(safe_remove_tree(&container_root(container_name)));
+}
+
+fn destroy(container_name : &str) -> Result<()> {
+    fn log_err(e: Error) {
+        println!("Error while destroying container: {:?}", e);
+    }
+
+    safe_remove_tree(&profile_dir(container_name)).unwrap_or_else(log_err);
+    safe_remove_tree(&format!("/nix/var/nix/gcroots/per-container/{}", container_name)).unwrap_or_else(log_err);
+    safe_remove_tree(&container_root(container_name)).unwrap_or_else(log_err);
+
     std::fs::remove_file(conf_file(container_name)).or_else(|e| match e.kind() {
         std::io::ErrorKind::NotFound => Ok(()),
         _ => Err(IoError(e))
@@ -223,9 +234,14 @@ fn destroy(container_name : &str) -> Result<()> {
 }
 
 fn go() -> Result<i32> {
-    let mut args = std::env::args();
-    args.next(); // Discard program name
+    // Skip program name
+    let mut args = std::env::args().skip(1).peekable();
+
+    let no_destroy = args.peek().map_or(false, |arg| arg == "--no-destroy");
+    if no_destroy { args.next(); }
+
     let config_file = try!(args.next().ok_or(Error::Usage("Missing config file argument".to_string())));
+
     let test_args : Vec<String> = args.collect();
     if test_args.len() == 0 {
         return Err(Usage("Missing test args".to_string()));
@@ -244,7 +260,12 @@ fn go() -> Result<i32> {
         None => run_test(&container_name, &test_args),
         Some(n) => Err(Interrupted(n))
     };
-    try!(destroy(&container_name));
+
+    let _ = stop(&container_name);
+    if !no_destroy {
+        try!(destroy(&container_name));
+    }
+
     res
 }
 
