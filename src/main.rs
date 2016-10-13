@@ -237,7 +237,7 @@ fn go() -> Result<i32> {
     // Skip program name
     let mut args = std::env::args().skip(1).peekable();
 
-    let no_destroy = args.peek().map_or(false, |arg| arg == "--no_destroy");
+    let no_destroy = args.peek().map_or(false, |arg| arg == "--no-destroy");
     if no_destroy { args.next(); }
 
     let config_file = try!(args.next().ok_or(Error::Usage("Missing config file argument".to_string())));
