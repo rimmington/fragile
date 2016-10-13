@@ -164,7 +164,7 @@ fn create(config_file : &str) -> Result<String> {
     match res.and_then(|()| populate_container(&name, config_file)) {
         Ok(()) => Ok(name),
         // Don't leave a half-baked container behind
-        Err(e) => { let (_, _) = (stop(&name), destroy(&name)); Err(e) }
+        Err(e) => { let _ = (stop(&name), destroy(&name)); Err(e) }
     }
 }
 
