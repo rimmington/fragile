@@ -1,5 +1,5 @@
 extern crate combine;
-extern crate nix; // As in *nix
+#[macro_use] extern crate nix; // As in *nix
 extern crate rand;
 extern crate signal;
 
@@ -10,6 +10,8 @@ mod commander;
 use nix::sys::signal::{kill, SIGTERM, SIGINT};
 use std::io;
 use std::io::Write;
+use std::os::unix::io::RawFd;
+use std::os::raw::c_long;
 use std::process::Command;
 
 #[derive(Debug)]
@@ -180,7 +182,7 @@ fn run_test(container_name : &str, args : &[String]) -> Result<i32> {
     match run(Command::new("nsenter")
             .arg("-t").arg(leader_pid)
             .arg("-m").arg("-u").arg("-i").arg("-n").arg("-p")
-            .arg("--").arg("/var/setuid-wrappers/su").arg("root").arg("-l").arg("-c").arg(format!("exec {}", su_cmd))) {
+            .arg("--").arg("su").arg("root").arg("-l").arg("-c").arg(format!("exec {}", su_cmd))) {
         Ok(()) => Ok(0),
         Err(NonZero(_, code)) => Ok(code),
         Err(e) => Err(e)
@@ -208,6 +210,36 @@ fn safe_remove_tree(path : &str) -> Result<()> {
     Ok(())
 }
 
+// http://lxr.free-electrons.com/source/include/uapi/linux/fs.h#L244
+const FS_IOC_MAGIC : u8 = 'f' as u8;
+const FS_IOC_GETFLAGS : u8 = 1;
+const FS_IOC_SETFLAGS : u8 = 2;
+const FS_IMMUTABLE_FL : c_long = 0x00000010;
+ioctl!(read  fs_getflags with FS_IOC_MAGIC, FS_IOC_GETFLAGS; c_long);
+ioctl!(write fs_setflags with FS_IOC_MAGIC, FS_IOC_SETFLAGS; c_long);
+
+fn remove_immutable_flag(fd : RawFd) -> Result<()> {
+    unsafe {
+        let mut existing : c_long = 0;
+        try!(fs_getflags(fd, &mut existing));
+        let new = existing & !FS_IMMUTABLE_FL;
+        try!(fs_setflags(fd, &new));
+    }
+    Ok(())
+}
+
+fn handle_var_empty(container_root : &str) -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let path = format!("{}/var/empty", &container_root);
+    let var_empty = std::path::Path::new(&path);
+    if var_empty.exists() {
+        let f = try!(std::fs::File::open(var_empty));
+        remove_immutable_flag(f.as_raw_fd())
+    } else {
+        Ok(())
+    }
+}
+
 fn stop(container_name : &str) -> Result<()> {
     match run(Command::new("systemctl").arg("stop").arg(format!("container@{}", container_name))) {
         Ok(()) => Ok(()),
@@ -225,7 +257,9 @@ fn destroy(container_name : &str) -> Result<()> {
 
     safe_remove_tree(&profile_dir(container_name)).unwrap_or_else(log_err);
     safe_remove_tree(&format!("/nix/var/nix/gcroots/per-container/{}", container_name)).unwrap_or_else(log_err);
-    safe_remove_tree(&container_root(container_name)).unwrap_or_else(log_err);
+    let container_root = container_root(container_name);
+    handle_var_empty(&container_root).unwrap_or_else(log_err);
+    safe_remove_tree(&container_root).unwrap_or_else(log_err);
 
     std::fs::remove_file(conf_file(container_name)).or_else(|e| match e.kind() {
         std::io::ErrorKind::NotFound => Ok(()),
@@ -254,7 +288,7 @@ fn go() -> Result<i32> {
 
     try!(system_init());
     // We suppress signals in this process and allow the commander module to deal with child processes
-    let trap = signal::trap::Trap::trap(&[SIGTERM, SIGINT]);
+    let trap = signal::trap::Trap::trap(&[SIGTERM as i32, SIGINT as i32]);
     let container_name = try!(create(&config_file));
     let res = match trap.wait(std::time::Instant::now()) {
         None => run_test(&container_name, &test_args),
@@ -276,7 +310,7 @@ fn main() {
         IoError(err) => { writeln!(io::stderr(), "{}", err).unwrap(); 2 },
         NixError(err) => { writeln!(io::stderr(), "{}", err).unwrap(); 2 },
         ControlError(msg) => { writeln!(io::stderr(), "{}", msg).unwrap(); 2 },
-        Interrupted(SIGINT) => { kill(nix::unistd::getpid(), SIGINT).unwrap(); loop {} }
+        Interrupted(n) if n == SIGINT as i32 => { kill(nix::unistd::getpid(), SIGINT).unwrap(); loop {} }
         Interrupted(n) => 128 + n
     }));
 }

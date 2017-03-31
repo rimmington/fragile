@@ -1,4 +1,4 @@
-{rustPlatform, stdenv, nix, systemd, coreutils, eject, findutils}:
+{rustPlatform, stdenv, nix, systemd, coreutils, eject, findutils, suPath ? "/run/wrappers/bin/su"}:
 
 rustPlatform.buildRustPackage {
   name = "fragile";
@@ -12,8 +12,9 @@ rustPlatform.buildRustPackage {
       --replace '"find"' '"${findutils}/bin/find"' \
       --replace '"umount"' '"${eject}/bin/umount"' \
       --replace '"mountpoint"' '"${eject}/bin/mountpoint"' \
-      --replace '"rm"' '"${coreutils}/bin/rm"'
+      --replace '"rm"' '"${coreutils}/bin/rm"' \
+      --replace '"su"' '"${suPath}"'
   '';
-  depsSha256 = "0mjazra3b6z128z5baq8hmq63b56iamh30qjn3ifzhx5znwq1vqi";
+  depsSha256 = "0azj2gmw1zy08dil7y2jclri1n52qcyn9hb88hln768ffj4bd2pp";
   shellHook = "unset SSL_CERT_FILE";  # https://github.com/NixOS/nixpkgs/issues/13744
 }

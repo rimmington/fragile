@@ -19,12 +19,12 @@ pub trait CommandOut : Sized {
 
 impl CommandOut for () {
     fn run<E>(cmd: &mut Command) -> Result<Self, E> where E: From<io::Error> + From<NonZero> {
-        let trap = signal::trap::Trap::trap(&[SIGTERM, SIGINT, SIGCHLD]);
+        let trap = signal::trap::Trap::trap(&[SIGTERM as i32, SIGINT as i32, SIGCHLD as i32]);
         let child = try!(cmd.spawn());
         let child_id = child.id() as i32;
         // There's a race here (might drop a SIGTERM), but there's no nice way to avoid it
         for sig in trap { match sig {
-            SIGCHLD => {
+            sig if sig == SIGCHLD as i32 => {
                 let status = try!(waitpid(child_id, Some(WNOHANG)).map_err(|e| match e { nix::Error::Sys(no) => io::Error::from_raw_os_error(no as i32), nix::Error::InvalidPath => unreachable!() }));
                 use nix::sys::wait::WaitStatus::*;
                 match status {
