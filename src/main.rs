@@ -1,6 +1,8 @@
 extern crate combine;
+extern crate docopt;
 #[macro_use] extern crate nix; // As in *nix
 extern crate rand;
+extern crate rustc_serialize;
 extern crate signal;
 
 mod commander;
@@ -13,6 +15,25 @@ use std::io::Write;
 use std::os::unix::io::RawFd;
 use std::os::raw::c_long;
 use std::process::Command;
+
+const USAGE : &'static str = "
+Usage:
+  fragile [options] <config-file> <test-command> [<test-arg> ...]
+
+Options:
+  --su-path <path>  Specify the path to the su setuid wrapper in the container
+  --no-destroy      Don't destroy the container after running the test command
+  -h --help         Show this screen
+";
+
+#[derive(Debug, RustcDecodable)]
+struct Args {
+    flag_su_path: Option<String>,
+    flag_no_destroy: bool,
+    arg_config_file: String,
+    arg_test_command: String,
+    arg_test_arg: Vec<String>
+}
 
 #[derive(Debug)]
 enum Error {
@@ -170,7 +191,7 @@ fn create(config_file : &str) -> Result<String> {
     }
 }
 
-fn run_test(container_name : &str, args : &[String]) -> Result<i32> {
+fn run_test(container_name : &str, args : &[String], su_path : Option<String>) -> Result<i32> {
     try!(run(Command::new("systemctl").arg("start").arg(format!("container@{}", container_name))));
     let leader_pid = try!(run(Command::new("machinectl").arg("show").arg(container_name).arg("-p").arg("Leader")).and_then(|o : String| {
         use combine::{string, many1, digit, spaces, eof, Parser, ParserExt};
@@ -182,7 +203,7 @@ fn run_test(container_name : &str, args : &[String]) -> Result<i32> {
     match run(Command::new("nsenter")
             .arg("-t").arg(leader_pid)
             .arg("-m").arg("-u").arg("-i").arg("-n").arg("-p")
-            .arg("--").arg("su").arg("root").arg("-l").arg("-c").arg(format!("exec {}", su_cmd))) {
+            .arg("--").arg(su_path.unwrap_or("su".to_owned())).arg("root").arg("-l").arg("-c").arg(format!("exec {}", su_cmd))) {
         Ok(()) => Ok(0),
         Err(NonZero(_, code)) => Ok(code),
         Err(e) => Err(e)
@@ -268,21 +289,12 @@ fn destroy(container_name : &str) -> Result<()> {
 }
 
 fn go() -> Result<i32> {
-    // Skip program name
-    let mut args = std::env::args().skip(1).peekable();
+    let args : Args = docopt::Docopt::new(USAGE).unwrap().decode().unwrap_or_else(|e| e.exit());
 
-    let no_destroy = args.peek().map_or(false, |arg| arg == "--no-destroy");
-    if no_destroy { args.next(); }
-
-    let config_file = try!(args.next().ok_or(Error::Usage("Missing config file argument".to_string())));
-
-    let test_args : Vec<String> = args.collect();
-    if test_args.len() == 0 {
-        return Err(Usage("Missing test args".to_string()));
-    }
+    let test_args : Vec<String> = Some(args.arg_test_command).into_iter().chain(args.arg_test_arg).collect();
 
     let config_file = {
-        let p = try!(std::fs::canonicalize(config_file).map_err(|e| Usage(format!("For config file: {}", e))));
+        let p = try!(std::fs::canonicalize(args.arg_config_file).map_err(|e| Usage(format!("For config file: {}", e))));
         try!(p.to_str().ok_or(Usage("Config file path is invalid UTF-8".to_string()))).to_string()
     };
 
@@ -291,12 +303,12 @@ fn go() -> Result<i32> {
     let trap = signal::trap::Trap::trap(&[SIGTERM as i32, SIGINT as i32]);
     let container_name = try!(create(&config_file));
     let res = match trap.wait(std::time::Instant::now()) {
-        None => run_test(&container_name, &test_args),
+        None => run_test(&container_name, &test_args, args.flag_su_path),
         Some(n) => Err(Interrupted(n))
     };
 
     let _ = stop(&container_name);
-    if !no_destroy {
+    if !args.flag_no_destroy {
         try!(destroy(&container_name));
     }
 

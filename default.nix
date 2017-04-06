@@ -15,6 +15,6 @@ rustPlatform.buildRustPackage {
       --replace '"rm"' '"${coreutils}/bin/rm"' \
       --replace '"su"' '"${suPath}"'
   '';
-  depsSha256 = "0azj2gmw1zy08dil7y2jclri1n52qcyn9hb88hln768ffj4bd2pp";
+  depsSha256 = "1y0xm6j90x5m89kqmrqz87wn521x81hby6yii75bkjjlyymc0mq8";
   shellHook = "unset SSL_CERT_FILE";  # https://github.com/NixOS/nixpkgs/issues/13744
 }
