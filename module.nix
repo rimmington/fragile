@@ -3,38 +3,35 @@
 with lib;
 
 let
-  cfg = config.services.fragile;
+  cfg = config.programs.fragile;
   fragile = pkgs.callPackage ./. { suPath = "${config.security.wrapperDir}/su"; };
 in {
   options = {
-    services.fragile.enable = mkOption {
+    programs.fragile.setuidWrapper = mkOption {
       type = types.bool;
       default = false;
       description = ''
-        Whether to enable fragile, placing it in the system packages.
-        This may have security implications.
+        Whether to add a setuid wrapper for fragile, allowing users in the
+        specified setuidGroup to execute fragile as root (ie. at all).
       '';
     };
 
-    services.fragile.permitNixbldSudo = mkOption {
-      type = types.bool;
-      default = true;
+    programs.fragile.setuidGroup = mkOption {
+      type = types.string;
+      default = "nixbld";
       description = ''
-        Whether to permit passwordless sudo access to fragile for users in the
-        nixbld group.
+        The group that is allowed to execute the setuid wrapper for fragile.
       '';
     };
   };
 
-  config = mkIf cfg.enable {
-    environment.systemPackages = [ fragile ];
-
-    security.sudo.extraConfig = mkIf cfg.permitNixbldSudo ''
-
-      # services.fragile.permitNixbldSudo
-      Cmnd_Alias FRAGILE = ${fragile}/bin/fragile
-      Defaults!FRAGILE env_keep += NIX_PATH
-      %nixbld ALL = NOPASSWD: FRAGILE
-    '';
+  config = mkIf cfg.setuidWrapper {
+    security.wrappers.fragile = {
+      source = "${fragile}/bin/fragile";
+      owner = "root";
+      group = cfg.setuidGroup;
+      setuid = true;
+      permissions = "u+rx,g+x";
+    };
   };
 }
